@@ -7,7 +7,9 @@
 getenv = True
 request_cpus = 2
 
-Requirements            = TARGET.vm_name == "ITS-U18-NFS-20191029"
++request_gpus = 1
+
+Requirements            = TARGET.vm_name == "ITS-U18-NFS-20191029_gpu"
 
 
 Universe       = vanilla
@@ -16,7 +18,7 @@ Arguments      = $(a) $(b) $(c) $(d) $(e) $(f) $(g) $(h)
 
 
 input   = /dev/null
-output  = /home/jkotary/fultr/out/rl_co_bellos_$(h).out
-error   = /home/jkotary/fultr/err/rl_co_bellos_$(h).error
+output  = /home/jkotary/fultr/out/run_$(h).out
+error   = /home/jkotary/fultr/err/run_$(h).err
 
 Queue a,b,c,d,e,f,g,h from run_hyperparams.in

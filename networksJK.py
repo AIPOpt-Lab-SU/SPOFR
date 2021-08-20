@@ -1055,7 +1055,7 @@ class PolicyLP(nn.Module):
 # Adapted from PolicyLP
 class PolicyLP_Plus(nn.Module):
     # nNodes is the number of nodes on the left and right
-    def __init__(self, N=1, eps=1e-1):
+    def __init__(self, N=1, eps=1e-1, position_bias_vector = torch.Tensor([])):
         super(PolicyLP_Plus, self).__init__()
 
         use_cuda = torch.cuda.is_available()
@@ -1063,7 +1063,8 @@ class PolicyLP_Plus(nn.Module):
 
         self.eps  = eps
         self.N    = N
-        self.exposure = 1 / ( torch.arange(self.N)+2 ).float().log()
+        #self.exposure = 1 / ( torch.arange(self.N)+2 ).float().log().to(self._device)  # this is what's used in FOEIR
+        self.exposure = position_bias_vector[:N].float().to(self._device)
         # exposure v_j = 1 / log(1 + j)
 
         if self.exposure.numel() != self.N:
@@ -1103,11 +1104,11 @@ class PolicyLP_Plus(nn.Module):
 
         #self.DSMl = COLlhs
         #self.DSMr = COLrhs
-        self.DSMl = torch.cat( (ROWlhs,COLlhs),0  )
-        self.DSMr = torch.cat( (ROWrhs,COLrhs),0  )
-        self.Q =  self.eps*Variable(torch.eye(self.N**2))
-        self.BDlhs =  torch.cat( (POSlhs,LEQ1lhs),0  )
-        self.BDrhs =  torch.cat( (POSrhs,LEQ1rhs),0  )
+        self.DSMl = torch.cat( (ROWlhs,COLlhs),0  ).to(self._device)
+        self.DSMr = torch.cat( (ROWrhs,COLrhs),0  ).to(self._device)
+        self.Q =  self.eps*Variable(torch.eye(self.N**2)).to(self._device)
+        self.BDlhs =  torch.cat( (POSlhs,LEQ1lhs),0  ).to(self._device)
+        self.BDrhs =  torch.cat( (POSrhs,LEQ1rhs),0  ).to(self._device)
 
 
 
@@ -1151,9 +1152,9 @@ class PolicyLP_Plus(nn.Module):
         e = Variable(torch.Tensor())
 
         # Try these with and without the expand
-        Q = self.Q.to(self._device)  #.unsqueeze(0).expand( nBatch, self.N**2,  self.N**2 )
-        DSMl = self.DSMl.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq, self.N**2 )
-        DSMr = self.DSMr.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq )
+        Q = self.Q  #.unsqueeze(0).expand( nBatch, self.N**2,  self.N**2 )
+        DSMl = self.DSMl#.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq, self.N**2 )
+        DSMr = self.DSMr#.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq )
 
 
         G = self.BDlhs.repeat(nBatch,1,1)
@@ -1198,6 +1199,21 @@ class PolicyLP_Plus(nn.Module):
         else:
             A = DSMl.repeat(nBatch,1,1)
             b = DSMr.repeat(nBatch,1)
+
+        """
+        print("Q.get_device() = ")
+        print( Q.get_device() )
+        print("x.get_device() = ")
+        print( x.get_device() )
+        print("G.get_device() = ")
+        print( G.get_device() )
+        print("h.get_device() = ")
+        print( h.get_device() )
+        print("A.get_device() = ")
+        print( A.get_device() )
+        print("b.get_device() = ")
+        print( b.get_device() )
+        """
 
         inputs = x
         #x = QPFunction(verbose=1)(   Q.double(), -inputs.double(), G.double(), h.double(), e, e   )
