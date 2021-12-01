@@ -1,10 +1,51 @@
 #JK 0803
+# Just a scrap notebook for testing individual components
 
 import torch, numpy, os, sys
 from torch import nn
 #from evaluation import sample_double_stoch, multiple_sample_and_log_probability
-from networksJK import PolicyLP, PolicyLP_Plus
+from networksJK import PolicyLP, PolicyLP_Plus, PolicyLP_PlusSP
 #from evaluation import compute_dcg_rankings
+from birkhoff import birkhoff_von_neumann_decomposition
+import numpy as np
+from evaluation import compute_dcg_rankings, evaluate_model, multiple_sample_and_log_probability, sample_double_stoch, compute_dcg_max #JK
+from fairness_loss import GroupFairnessLoss
+from matplotlib import pyplot as plt
+from gurobi_rank import * #grb_solve
+
+
+# No bath input, just single 1D tensor
+def to_permutation(ranks):
+    ranks = ranks.long()
+    P = torch.zeros(len(ranks),len(ranks))
+    for k in range(len(ranks)):
+        P[k][ranks[k]-1] = 1
+
+    return P
+
+# here pmat is a single sample, i.e. not a batch
+# same holds for  group_identities, position_bias_vector
+def test_fairness(pmat, group_identities, position_bias_vector):
+
+
+    v = position_bias_vector[:pmat.shape[1]]
+    f = ( group_identities / group_identities.sum() )   -   ( (1-group_identities) / (1-group_identities).sum() )
+    ret = torch.mv(pmat,v)
+    ret = torch.dot(f,ret)
+    return ret.item()
+
+
+def test_fairness_alt(pmat, group_identities, position_bias_vector):
+
+    v = position_bias_vector[:pmat.shape[1]]
+    f = ( group_identities / group_identities.sum() )   -   ( (1-group_identities) / (1-group_identities).sum() )
+    fTv = torch.mm(f.unsqueeze(0).T,v.unsqueeze(0))
+    ret = torch.dot( fTv.flatten(), pmat.flatten() )
+
+    return ret.item()
+
+
+
 
 
 """
@@ -41,25 +82,47 @@ scores = torch.Tensor([[ 8.7845e-02,  3.0729e-01,  1.3841e-01,  2.2779e-01, -2.3
                           2.8865e-01,  7.7143e-01,  7.1352e-01,  7.7763e-01,  4.5897e-01]])
 
 
-scores.repeat(1,1,scores.shape[1])
-
-scores.unsqueeze(0).view(scores.shape[0],-1,1)
-
-scores.unsqueeze(0).view(scores.shape[0],1,-1)
-
-torch.ones(scores.shape[0],1,scores.shape[1])
-
-torch.bmm( scores.unsqueeze(0).view(scores.shape[0],-1,1), torch.ones(scores.shape[0],1,scores.shape[1])  )
-
+#scores.repeat(1,1,scores.shape[1])
+#scores.unsqueeze(0).view(scores.shape[0],-1,1)
+#scores.unsqueeze(0).view(scores.shape[0],1,-1)
+#torch.ones(scores.shape[0],1,scores.shape[1])
+#torch.bmm( scores.unsqueeze(0).view(scores.shape[0],-1,1), torch.ones(scores.shape[0],1,scores.shape[1])  )
 #torch.bmm( scores.unsqueeze(0).view(scores.shape[0],-1,1),
-
-
 #scores = torch.nn.functional.relu(scores)
-
+"""
 group_identities = torch.Tensor([[0., 1., 0., 0., 0., 1., 0., 0., 0., 0., 1., 1., 0., 0., 0., 1., 0., 0., 0., 0.],
                                  #[0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
                                  [0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
                                  [0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0.]])
+"""
+group_identities = torch.Tensor([[1., 0., 1., 0., 1., 0., 1., 0., 1., 0., 1., 0., 1., 0., 1., 0., 1., 0., 1., 0.],
+                                 #[0., 1., 0., 1., 1., 1., 0., 0., 0., 0., 1., 1., 0., 0., 0., 1., 0., 0., 1., 0.],
+                                 #[0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
+                                 #[0., 0., 1., 0., 1., 0., 1., 0., 1., 0., 1., 1., 0., 0., 0., 1., 0., 1., 0., 1.],
+                                 #[0., 1., 1., 0., 0., 1., 0., 1., 0., 1., 0., 0., 1., 0., 0., 1., 1., 1., 0., 0.]])
+                                 #[1., 0., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 1., 0.],
+                                 #[1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.],
+                                 #[1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0.],
+                                 #[1., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 1., 0.],
+                                 #[1., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
+                                 #[1., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.],
+                                 #[1., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0.],
+                                 #[1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 1., 0.],
+                                 #[1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 1.],
+                                 [1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0.]])
+
+
+n_trials = 25
+#group_identities = torch.tril( torch.ones(n_trials,n_trials) )[:-1]
+
+
+
+
+#torch.manual_seed(5)
+scores = torch.rand(group_identities.shape)
+#torch.manual_seed(0)
+#numpy.random.seed(0)
+
 
 # Not related to the above; taken from some random output
 test_rankings = torch.tensor(  [[[19,  2,  6, 15,  8, 14, 13, 12,  7, 18,  3, 11,  1,  9,  5, 17, 16, 0, 10,  4],
@@ -75,39 +138,26 @@ test_rankings = torch.tensor(  [[[19,  2,  6, 15,  8, 14, 13, 12,  7, 18,  3, 11
                                  [17,  2,  6, 12,  0, 10, 14, 13,  5,  8, 19, 16, 11,  1,  7,  4,  9, 15, 18,  3]]]).long()
 
 
-test_rels =       torch.Tensor([[0., 0., 0., 0., 5., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
+test_rels =       torch.Tensor([[0., 0., 0., 5., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
+                                #[0., 0., 0., 0., 5., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
                                 #[0., 2., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
                                 [0., 2., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
-                                [0., 2., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]])
+                                [0., 3., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]])
 
+test_rels = torch.rand(group_identities.shape)
 
-#### temp ######
-#policy_lp = PolicyLP_Plus(N=4)
-#input("Finished inspecting row and column constraints")
-################
-
-
-
-
-
-
+cutoff = 100
+group_identities = group_identities[:,:cutoff]
+test_rels = test_rels[:,:cutoff]
+scores = scores[:,:cutoff]
 
 
 #p_mat = 0.05*torch.ones(20,20).repeat(4,1,1)
-batch = 3
-
-policy_lp = PolicyLP_Plus(N=scores.shape[1])
-
-#p_mat = policy_lp(scores.repeat(1,1,scores.shape[1]).squeeze(), None )#group_identities)
-print("scores = ")
-print( scores )
-print("scores.repeat(1,1,scores.shape[1]).size() = ")
-print( scores.repeat(1,1,scores.shape[1]).size()   )
-print("torch.repeat_interleave(scores,4,1).size() = ")
-print( torch.repeat_interleave(scores,scores.shape[1],1).size() )
-input("Done printing scores")
+batch = group_identities.shape[0]
 
 
+
+"""
 fXv = torch.bmm( scores.unsqueeze(0).view(scores.shape[0],-1,1), scores.unsqueeze(0).view(scores.shape[0],-1,1).permute(0,2,1)  ).reshape(scores.shape[0],-1)
 for k in range(batch):
     #fXv = torch.bmm( scores.unsqueeze(0).view(scores.shape[0],-1,1), torch.ones(scores.shape[0],1,scores.shape[1])  ).permute(0,2,1).reshape(scores.shape[0],-1)
@@ -120,22 +170,255 @@ for k in range(batch):
     print("p_mat = ")
     print( p_mat )
     input("##############")
+"""
  #Jk note: Not every instance is infeasible, every instance show nan in verbose output
 
 
+rel = test_rels
 
-p_mat = policy_lp(  fXv, group_identities )
+position_bias_vector = 1. / torch.arange(1.,100.)
+test_dscts = ( 1.0 / torch.log2(torch.arange(scores.shape[1]).float() + 2) ).repeat(batch,1,1)
 
+policy_lp = PolicyLP_Plus(N=scores.shape[1], eps = 0.1, position_bias_vector = position_bias_vector)
+score_cross = torch.bmm( scores.unsqueeze(0).view(scores.shape[0],-1,1), scores.unsqueeze(0).view(scores.shape[0],-1,1).permute(0,2,1)  ).reshape(scores.shape[0],-1)
+
+score_cross = torch.rand(score_cross.shape)
+
+#p_mat = policy_lp(  score_cross, group_identities )
+
+#print("test_fairness(p_mat[0], group_identities[0], position_bias_vector) = ")
+#print( test_fairness(p_mat[0], group_identities[0], position_bias_vector) )
+
+#p_mat_ort = ort_solve(20, score_cross[0].detach().numpy(), group_identities[0])
+s,x = ort_setup(20, group_identities[0])
+#s,x = ort_setup_Neq(20, group_identities[0], 0.01)
+solver = ort_policyLP(s,x)
+
+p_mat_ort = []
+for i in range(score_cross.shape[0]):
+    p_mat_ort.append( solver.solve(score_cross[i].detach().numpy()).reshape(20,20) )
+
+p_mat_ort = np.array(p_mat_ort)
+
+
+print("test_fairness( torch.Tensor(p_mat_ort[0]), group_identities[0], position_bias_vector ) = ")
+print( test_fairness( torch.Tensor(p_mat_ort[0]), group_identities[0], position_bias_vector ) )
+
+# Objective vals:
+#print( np.dot(p_mat_ort, score_cross.detach().numpy()) )
+#print( np.dot(p_mat[0].flatten().detach().numpy(), score_cross[0].detach().numpy()) )
+
+#print("test_fairness(p_mat[0], group_identities[0], position_bias_vector) = ")
+#print( test_fairness(p_mat[0], group_identities[0], position_bias_vector) )
+
+p_mat_ort = torch.Tensor(p_mat_ort)
+
+#print("p_mat_ort = ")
+#print( p_mat_ort    )
+
+dcg_max = compute_dcg_max(rel)
+
+loss_a = torch.bmm( p_mat_ort, test_dscts.view(scores.shape[0],-1,1) )
+loss_b = torch.bmm( rel.view(scores.shape[0],1,-1), loss_a ).squeeze()
+loss_norm = loss_b / dcg_max
+loss = loss_norm
+
+print("loss (NDCG) = ")
+print( loss )
+
+
+# Take one element from here
+policy = p_mat_ort[1].cpu().detach().numpy()    #  precision is lost by np->torch->np
+
+decomp = birkhoff_von_neumann_decomposition(policy)
+
+
+convex_coeffs, permutations = zip(*decomp)
+permutations = torch.Tensor(permutations)
+sample_size = 100000
+#rolls = torch.multinomial(torch.Tensor(convex_coeffs),sample_size,replacement=True).numpy()
+rolls = np.random.multinomial(sample_size, np.array(convex_coeffs))  # sample the permutations based on convex_coeffs
+print("len(convex_coeffs) = ")
+print( len(convex_coeffs) )
+
+print("np.sort(convex_coeffs) = ")
+print( np.sort(convex_coeffs) )
+
+#print("rolls/rolls.sum() = ")
+#print( rolls/rolls.sum()    )
+p_sample = permutations[rolls]       # access the permutations
+
+print("rolls.mean() = ")
+print( rolls.mean()    )
+
+sum = 0
+for i in range(len(p_sample)):
+    sum += test_fairness(p_sample[i],group_identities[0], position_bias_vector)
+sum /= len(p_sample)
+
+print("sum = ")
+print( sum  )
+
+print("len(convex_coeffs) = ")
+print( len(convex_coeffs) )
+
+print("np.sort(convex_coeffs) = ")
+print( np.sort(convex_coeffs) )
+
+
+
+input("Press enter to quit")
+quit()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### SPO test
+
+spo_coeffs = score_cross[0]
+spo_group_ids = group_identities[0]
+
+P_spo = grb_solve(20, spo_coeffs, spo_group_ids)
+
+
+
+policy = P_spo.view(20,20).cpu().detach().numpy()
+#poicy = policy
+
+print("policy = ")
+print( policy )
+
+decomp = birkhoff_von_neumann_decomposition(policy)
+
+
+convex_coeffs, permutations = zip(*decomp)
+permutations = torch.Tensor(permutations)
+sample_size = 2000
+rolls = torch.multinomial(torch.Tensor(convex_coeffs),sample_size,replacement=True).numpy()
+#rolls = np.random.multinomial(sample_size, np.array(convex_coeffs))  # sample the permutations based on convex_coeffs
+p_sample = permutations[rolls]       # access the permutations
+
+
+sum = 0
+for i in range(len(p_sample)):
+    sum += test_fairness(p_sample[i],group_identities[0], position_bias_vector)
+sum /= sample_size
+
+print("sum = ")
+print( sum  )
+
+print("len(convex_coeffs) = ")
+print( len(convex_coeffs) )
+
+print("np.sort(convex_coeffs) = ")
+print( np.sort(convex_coeffs) )
+
+input("waiting")
+
+#### END SPO test
+
+
+
+
+
+
+
+
+
+
+sample_size = 1000
+P = p_mat.cpu().detach().numpy()
+R = []
+for it, policy in enumerate(P):
+    decomp = birkhoff_von_neumann_decomposition(policy)
+
+    # Rebuild the decomp
+    """
+    new_decomp = []
+    for c,p in decomp:
+        if c < 1e-8:
+            new_decomp.append( (c,p) )
+    decomp = new_decomp
+    """
+    #####################
+
+    convex_coeffs, permutations = zip(*decomp)
+    permutations = np.array(permutations)
+    rolls = torch.multinomial(torch.Tensor(convex_coeffs),sample_size,replacement=True).numpy()
+    #rolls = np.random.multinomial(sample_size, np.array(convex_coeffs))  # sample the permutations based on convex_coeffs
+    p_sample = permutations[rolls]       # access the permutations
+    r_sample = p_sample.argmax(2)        # convert to rankings
+    r_sample = torch.tensor( r_sample )  # convert to same datatype as FULTR implementation
+    R.append(r_sample)
+
+rankings = torch.stack(R)
+print("rankings.size() = ")
+print( rankings.size() )
+
+test_dscts = ( 1.0 / torch.log2(torch.arange(scores.shape[1]).float() + 2) ).repeat(batch,1,1)
+
+
+
+a = torch.bmm( p_mat, test_dscts.view(batch,-1,1) )
+b = torch.bmm( test_rels.view(batch,1,-1), a )
+
+
+ndcgs, dcgs = compute_dcg_rankings(rankings, rel)
+dcg_max = compute_dcg_max(rel)
+
+loss_a = torch.bmm( p_mat, test_dscts.view(scores.shape[0],-1,1) )
+loss_b = torch.bmm( rel.view(scores.shape[0],1,-1), loss_a ).squeeze()
+loss_norm = loss_b / dcg_max
+loss = -loss_norm
+
+
+utility_list = ndcgs
+
+reward_variance_list = []
+rewards_list = []
+#entropy_list.append(entropy.item())   JK  no entropy
+train_ndcg_list = []
+train_dcg_list = []
+weight_list = []
+
+reward_variance_list.append(utility_list.var(dim=1).mean().item())
+rewards_list.append(utility_list.mean().item())
+#entropy_list.append(entropy.item())   JK  no entropy
+train_ndcg_list.append(ndcgs.mean(dim=1).sum().item())
+train_dcg_list.append(dcgs.mean(dim=1).sum().item())
+weight_list.append(rel.sum().item())
+
+weight_sum = np.sum(weight_list)
+
+
+indicator_disparity = GroupFairnessLoss.compute_multiple_group_disparity(rankings, rel,
+                                                                         group_identities,
+                                                                         0,
+                                                                         0,
+                                                                         position_bias_vector,
+                                                                         "disp0",
+                                                                         noise=False,
+                                                                         en=0.0).mean(dim=-1)
 
 
 print("scores = ")
 print(scores)
+
 print("group_identities = ")
 print(group_identities)
-
-
-
-test_dscts = ( 1.0 / torch.log2(torch.arange(scores.shape[1]).float() + 2) ).repeat(batch,1,1)
 
 print("p_mat = ")
 print( p_mat )
@@ -149,19 +432,148 @@ print( test_rels )
 print("p_mat.size() = ")
 print( p_mat.size() )
 
-print("test_dscts.size() = ")
-print( test_dscts.size() )
 
-print("test_rels.size() = ")
-print( test_rels.size() )
+print("ndcgs = ")
+print( ndcgs )
 
-a = torch.bmm( p_mat, test_dscts.view(batch,-1,1) )
-b = torch.bmm( test_rels.view(batch,1,-1), a )
+print("dcgs = ")
+print( dcgs )
 
-print("a = ")
-print( a )
-print("b = ")
-print( b )
 
-print("b.mean() = ")
-print( b.mean() )
+print("loss = ")
+print( loss )
+
+print("indicator_disparity = ")
+print( indicator_disparity  )
+
+print("group_identities.sum(1) = ")
+print( group_identities.sum(1)   )
+
+print("group_identities = ")
+print( group_identities    )
+
+print("len(p_mat) = ")
+print( len(p_mat) )
+
+print("\nFairness violations:")
+for i in range(len(p_mat)):
+    print( test_fairness(p_mat[i],group_identities[i], position_bias_vector) )
+
+
+print("\nFairness violations (Alt):")
+for i in range(len(p_mat)):
+    print( test_fairness_alt(p_mat[i],group_identities[i], position_bias_vector) )
+
+
+print(   to_permutation(torch.Tensor([1,2,3,4,5]))   )
+
+#rankings.size() =
+#torch.Size([11, 500, 20])
+
+fair_viols = []
+
+for i, samples in enumerate(rankings):
+    sum = 0
+    for ranking in samples:
+        v = test_fairness(  to_permutation(ranking) , group_identities[i], position_bias_vector  )
+        sum += v
+    fair_viols.append(sum/len(samples))
+
+print("\nFairness violations (Sampled):")
+for i in range(len(fair_viols)):
+    print( fair_viols[i] )
+
+
+input("Waitn")
+
+
+P = p_mat[0].cpu().detach().numpy()
+print("P = ")
+print( P )
+
+
+decomp = birkhoff_von_neumann_decomposition(P)
+convex_coeffs, permutations = zip(*decomp)
+
+
+
+# Rebuild the decomp
+
+new_decomp = []
+for c,p in decomp:
+    if c < 1e-8:
+        new_decomp.append( (c,p) )
+decomp = new_decomp
+
+#####################
+
+
+
+print("decomp = ")
+print( decomp  )
+
+print("decomp[0] = ")
+print( decomp[0]  )
+
+print("len(decomp) = ")
+print( len(decomp)    )
+
+print("convex_coeffs = ")
+print( convex_coeffs )
+
+recomp = 0
+for i in range(len(decomp)):
+    recomp += decomp[i][0]*decomp[i][1]
+
+print("recomp = ")
+print( recomp )
+
+print("P - recomp = ")
+print( P - recomp )
+
+print("np.max(P - recomp) = ")
+print( np.max(P - recomp) )
+
+print("np.sort( (P - recomp).flatten() ) = ")
+print( np.sort( (P - recomp).flatten() ) )
+# test fairness of the recomp, and then of the sampling over the decomp
+
+print("P Fairness violation:")
+print( test_fairness(torch.Tensor(P),group_identities[0], position_bias_vector) )
+
+print("recomp Fairness violation:")
+print( test_fairness(torch.Tensor(recomp),group_identities[0], position_bias_vector) )
+
+print("recomp combined Fairness violation:")
+viol = 0
+for i in range(len(decomp)):
+    viol += decomp[i][0]* test_fairness(torch.Tensor(decomp[i][1]),group_identities[0], position_bias_vector)
+print(viol)
+
+
+convex_coeffs, permutations = zip(*decomp)
+permutations = np.array(permutations)
+sample_size = 5000
+rolls = torch.multinomial(torch.Tensor(convex_coeffs),sample_size,replacement=True).numpy()
+#rolls = np.random.multinomial(sample_size, np.array(convex_coeffs))  # sample the permutations based on convex_coeffs
+p_sample = permutations[rolls]       # access the permutations
+#r_sample = p_sample.argmax(2)        # convert to rankings
+#r_sample = torch.tensor( r_sample )  # convert to same datatype as FULTR implementation
+#R.append(r_sample)
+psum = 0
+for x in p_sample:
+    psum += x
+
+x = x/len(x)
+
+print("x.sum() = ")
+print( x.sum() )
+
+print("recomp Fairness violation (sampled):")
+print( test_fairness(torch.Tensor(x),group_identities[0], position_bias_vector) )
+
+
+
+#torch.sum(exposures[inds_g0]) / inds_g0.sum() - torch.sum(exposures[inds_g1]) / inds_g1.sum()
+#plt.plot( range(len(indicator_disparity)),indicator_disparity )
+#plt.show()

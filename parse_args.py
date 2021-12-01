@@ -4,7 +4,7 @@ from utils import unserialize, add_bool_arg
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("lambda_list", type=str, default="[0.0]")
+#parser.add_argument("lambda_list", type=str, default="[0.0]")
 parser.add_argument("--args_file", type=str, default=None)
 add_bool_arg(parser, "tuning", default=False)
 parser.add_argument("--load_model", type=str, default=None)
@@ -55,8 +55,8 @@ parser.add_argument("--group_disparity_indicator_batch_size",
 parser.add_argument("--position_bias_power", type=float, default=1.0)
 parser.add_argument("--indicator_type", type=str, default="square", choices=['square', 'sign', 'none'])
 parser.add_argument(
-    "--disparity_type", type=str, default="disp3",
-    choices=['disp1', 'disp2', 'disp3', 'ashudeep', 'ashudeep_mod'])
+    "--disparity_type", type=str, default="disp0",
+    choices=['disp0', 'disp1', 'disp2', 'disp3', 'ashudeep', 'ashudeep_mod']) # JK added choice disp0
 add_bool_arg(parser, "track_other_disparities", False)
 
 add_bool_arg(parser, "weighted", True)
@@ -102,11 +102,33 @@ parser.add_argument("--write_losses_interval", type=int, default=1000)
 parser.add_argument("--DSM", type=int, default=0)
 parser.add_argument("--DSMfair", type=int, default=0)
 parser.add_argument("--soft_train", type=int, default=0)
+parser.add_argument("--allow_unfairness", type=int, default=0)  # if fairness_gap=0, this turns equality constraints into equivalent inequalities
+parser.add_argument("--fairness_gap", type=float, default=0.0)  # if allow_unfairness=0, this has no effect
+parser.add_argument("--quad_reg", type=float, default=0.1)
+parser.add_argument("--index", type=int, default = 9999)
+parser.add_argument("--embed_groups", type=int, default = 0)
+parser.add_argument("--embed_quadscore", type=int, default = 0)
+parser.add_argument("--list_len", type=int, default = 20)  # length of lists to be ranked; needed only due to JK mods (group embedding)
+parser.add_argument("--solver_software", type=str, default = 'google')
+parser.add_argument("--output_tag", type=str, default = 'notag')
+parser.add_argument("--seed", type=int, default = 9999)
+parser.add_argument("--multi_groups", type=int, default=0)   # values of 1 and 2 are not appropriate; 0 indicates 2 groups (original)
+parser.add_argument("--gme_new", type=int, default=1)   # 0 indicates original get_multiple_exposures function; 1 indicates the revision by JK
+parser.add_argument("--lambda_group_fairness", type=float, default=0.000000000001)
 
 add_bool_arg(parser, "noise", False)
 parser.add_argument("--en", type=float, default=0.1)
 
 args = parser.parse_args()
+
+
+if 'mslr' in args.partial_train_data.lower():    # JK watch out for when partial_train_data isn't used
+    args.group_feat_id = 132
+    args.input_dim = 136
+    args.dataset = 'mslr'
+    args.group_feat_threshold = 0.03252032399177551   # JK taken from my_dispatcher.py
+else:
+    args.dataset = 'german'             # JK careful if you add more datasets
 
 if args.args_file is not None:
     args_file = unserialize(args.args_file)

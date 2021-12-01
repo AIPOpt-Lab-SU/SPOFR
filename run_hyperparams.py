@@ -10,14 +10,25 @@ import ast
 
 from parse_args import args
 from datareader import reader_from_pickle
-from train import on_policy_training, soft_policy_training # JK
-from models import LinearModel, MLP
+from train2 import on_policy_training, soft_policy_training, soft_policy_training_spo, soft_policy_training_spo_multi # JK
+from models import LinearModel, MLP, MLPGroupEmbedding, SiameseMLP, MLPQuadScore # JK
 from evaluation import evaluate_model
 from utils import serialize, transform_dataset, unserialize
+from models import LinearModel, init_weights
+from zehlike import demographic_parity_train
+from baselines import vvector
 
 if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
     #torch.set_num_threads(args.num_cores)  # JK 0805
+
+
+    args.lambda_list = "[0.0]"   # JK 11/13
+
+
+    if args.seed != 9999:
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
 
     train_data = reader_from_pickle(
         args.partial_train_data) if args.fullinfo == "partial" else reader_from_pickle(args.full_train_data)
@@ -33,6 +44,7 @@ if __name__ == "__main__":
 
     test_data = reader_from_pickle(args.full_test_data)
     test_data = test_data.data
+    test_data = transform_dataset(test_data, args.gpu, True)  # JK new, previously done below (commented)
 
     if args.summary_writing:
         if not os.path.exists(args.log_dir):
@@ -45,7 +57,14 @@ if __name__ == "__main__":
         writer = None
 
     model_params_list = []
+
     a = ast.literal_eval(args.lambda_list)
+
+    print("a = ")
+    print( a )
+    print("type(a) = ")
+    print( type(a)    )
+
     lambdas_list = [float(c) for c in a]
     plt_data = []
     plt_data_dict = []
@@ -56,7 +75,7 @@ if __name__ == "__main__":
     for i, lgroup in enumerate(lambdas_list):
         args.lambda_reward = 1.0
         args.lambda_ind_fairness = 0.0
-        args.lambda_group_fairness = lgroup
+        #args.lambda_group_fairness = lgroup
 
         wd = args.weight_decay
         er = args.entropy_regularizer
@@ -77,25 +96,71 @@ if __name__ == "__main__":
             model = MLP(input_dim=args.input_dim,
                         hidden_layer=args.hidden_layer,
                         dropout=args.dropout, **model_kwargs)
+            # JK
+            if args.soft_train:
+                use_init = True
+                if use_init:
+                    init_weights(model, 'xavier')
+
+
+        # JK
+        if args.embed_groups:
+            model = SiameseMLP( model, MLPGroupEmbedding(input_dim=args.list_len,
+                                                         hidden_layer=1,    # JK static choice for now
+                                                         dropout=args.dropout, **model_kwargs) )
+        elif args.embed_quadscore:
+            model = MLPQuadScore(model, list_len=args.list_len)
+
+
         # JK
         #result = on_policy_training(
         #    train_data, val_data, model, writer=writer,
         #    experiment_name=experiment_name, args=args)
         if not args.soft_train:
             result = on_policy_training(
-                train_data, val_data, model, writer=writer,
+                train_data, val_data, test_data, model, writer=writer,
                 experiment_name=experiment_name, args=args)
-        else:
-            result = soft_policy_training(
-                train_data, val_data, model, writer=writer,
-                experiment_name=experiment_name, args=args)
+
+        elif args.soft_train == 1:
+            #result = soft_policy_training(
+            if args.multi_groups != 0:
+                result = soft_policy_training_spo_multi(
+                    train_data, val_data, test_data, model, writer=writer,
+                    experiment_name=experiment_name, args=args)
+            else:
+                result = soft_policy_training_spo(
+                    train_data, val_data, test_data, model, writer=writer,
+                    experiment_name=experiment_name, args=args)
+
+        elif args.soft_train == 2:
+            if args.disparity_type == 'disp0':
+                group0_merit = 1.0     # TODO write these in for the different datasets
+                group1_merit = 1.0
+            else:
+                if 'mslr' in args.partial_train_data.lower():
+                    group0_merit = 1.91391408523019
+                    group1_merit = 2.5832905470933882
+                else:
+                    group0_merit = 3.1677021123091107
+                    group1_merit = 1.415066736141729
+            #a = ast.literal_eval(args.lambda_list)
+            #lambdas_list = [float(c) for c in a]
+            #args.lambda_group_fairness = lambdas_list[-1]
+            #
+            kwargs = {'clamp': args.clamp}
+            if args.mask_group_feat:
+                kwargs['masked_feat_id'] = args.group_feat_id
+            model = MLP(args.input_dim, args.hidden_layer, args.dropout, **kwargs)
+            model = demographic_parity_train(model, train_data, val_data, test_data, vvector(200), args, group0_merit, group1_merit)
+
+
 
         model, performance = result
         print(model)
         print("Get best performance {} at weight decay {}, entropy_regularizer {}".format(
                     performance, wd, er))
 
-        test_data = transform_dataset(test_data, args.gpu, True)
+        #test_data = transform_dataset(test_data, args.gpu, True)   JK moved this up
         results_test = evaluate_model(
             model, test_data, fairness_evaluation=False,
             group_fairness_evaluation=True, track_other_disparities=True,

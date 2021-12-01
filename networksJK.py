@@ -1,7 +1,7 @@
 # 1.1 NETWORK STRUCTURE
 from torch.autograd import Variable
 from torch.nn.parameter import Parameter
-from qpth.qp import QPFunction
+from qpth.qp import QPFunction, SpQPFunction
 import numpy as np
 import torch
 from torch import nn
@@ -1178,13 +1178,16 @@ class PolicyLP_Plus(nn.Module):
             v = self.exposure.repeat(f.shape[0],1) # repeat to match dimensions of f (batch dim)
 
             # Set up v and f for outer product
-            v_unsq = v.unsqueeze(1).permute(0,2,1)
-            f_unsq = f.unsqueeze(1)
+            v_unsq = v.unsqueeze(1)
+            f_unsq = f.unsqueeze(1).permute(0,2,1)
+            #v_unsq = v.unsqueeze(1).permute(0,2,1)
+            #f_unsq = f.unsqueeze(1)
 
             # Outer product v f^T
             #   unroll to match P*
             #   unsqueeze to make each a 1-row matrix
-            vXf = torch.bmm(v_unsq,f_unsq).view(-1,group_ids.shape[1]**2).unsqueeze(1).to(self._device) # this is still a batch
+            vXf = torch.bmm(f_unsq,v_unsq).view(-1,group_ids.shape[1]**2).unsqueeze(1).to(self._device) # this is still a batch
+            #vXf = torch.bmm(v_unsq,f_unsq).view(-1,group_ids.shape[1]**2).unsqueeze(1).to(self._device) # this is still a batch
             fair_b = torch.zeros(nBatch,1).to(self._device)
 
             # JK Do we need to consider the computation graph wrt the group identity vectors?
@@ -1200,50 +1203,34 @@ class PolicyLP_Plus(nn.Module):
             A = DSMl.repeat(nBatch,1,1)
             b = DSMr.repeat(nBatch,1)
 
-        """
-        print("Q.get_device() = ")
-        print( Q.get_device() )
-        print("x.get_device() = ")
-        print( x.get_device() )
-        print("G.get_device() = ")
-        print( G.get_device() )
-        print("h.get_device() = ")
-        print( h.get_device() )
-        print("A.get_device() = ")
-        print( A.get_device() )
-        print("b.get_device() = ")
-        print( b.get_device() )
-        """
+
 
         inputs = x
         #x = QPFunction(verbose=1)(   Q.double(), -inputs.double(), G.double(), h.double(), e, e   )
         x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), G.double(), h.double(), A.double(), b.double()   )
         #x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), G.double(), h.double(), vXf.double(), b.double()   )
         #x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), G.double(), h.double(), e, e   )
-        print("PolicyLP_Plus fwd complete")
         return x.view(-1,self.N,self.N).float()
         # shape returned from QPFunction should be nBatch,N**2
 
 
 
 
-
-
-
-# JK - check - unfinished
-# Adapted from PolicyLP_PlusNeq
-# Uses Inequality constraints
-class PolicyLP_PlusNeq(nn.Module):
+# Adapted from PolicyLP
+class PolicyLP_PlusSP(nn.Module):
     # nNodes is the number of nodes on the left and right
-    def __init__(self, N=1, eps=1e-1):
-        super(PolicyLP_PlusNeq, self).__init__()
+    def __init__(self, N=1, eps=1e-1, position_bias_vector = torch.Tensor([])):
+        super(PolicyLP_PlusSP, self).__init__()
 
         use_cuda = torch.cuda.is_available()
         self._device = torch.device("cuda" if use_cuda else "cpu")
 
         self.eps  = eps
-        self.N    = N
-        self.exposure = 1 / ( torch.arange(self.N)+2 ).float().log()
+        self.N    = N     # list length
+        self.nx = N**2
+
+        #self.exposure = 1 / ( torch.arange(self.N)+2 ).float().log().to(self._device)  # this is what's used in FOEIR
+        self.exposure = position_bias_vector[:N].float().to(self._device)
         # exposure v_j = 1 / log(1 + j)
 
         if self.exposure.numel() != self.N:
@@ -1260,6 +1247,10 @@ class PolicyLP_PlusNeq(nn.Module):
         # All values are positive
         POSlhs    = Variable(    -torch.eye(N**2,N**2)        )
         POSrhs    = Variable(    -torch.zeros(N**2)        )
+        LEQ1lhs    = Variable(    torch.eye(N**2,N**2)        )
+        LEQ1rhs    = Variable(    torch.ones(N**2)        )
+
+
 
         # Row sum constraints
         for row in range(N):
@@ -1276,93 +1267,340 @@ class PolicyLP_PlusNeq(nn.Module):
         # Total inequalities
         #self.G = torch.cat( (ROWlhs,COLlhs, POSlhs),0  )
         #self.h = torch.cat( (ROWrhs,COLrhs, POSrhs),0  )
-        self.G = torch.cat( (ROWlhs,COLlhs),0  )
-        self.h = torch.cat( (ROWrhs,COLrhs),0  )
-        self.Q =  self.eps*Variable(torch.eye(self.N**2))
-        self.POSlhs = POSlhs
-        self.POSrhs = POSrhs
 
-        # Difference from the Joaquims paper -
-        #   inequality constraints used rather than equality
-
-
-
-        #self.nineq = self.G.size(0)
-
-        # row  = position
-        # col  = item / document
-
-        # decision variable yij    1 <= i <= N1,  1 <= j <= N2
-        # N1 nodes in G1, N2 nodes in G2
-        #
-        # max v^T y
-        #
-        # sum_i yij <= 1    all j in G1 vertices
-        # sum_j yij <= 1    all i in G2 vertices
-        #
-        # yij >= 0  (is this necessary?)
-        #
-        #
-        # ineq matrix w/ N rows, N^2 cols
-        #nineq
-        # assume the variable y is an unrolled version of the matrix above
-        # row-major order (row1, row2, ...)
-        #
-        # v[i*J+j] = v_ij is the weight matching node i on the left to j on the right
+        #self.DSMl = COLlhs
+        #self.DSMr = COLrhs
+        self.DSMl = torch.cat( (ROWlhs,COLlhs),0  ).to(self._device)
+        self.DSMr = torch.cat( (ROWrhs,COLrhs),0  ).to(self._device)
+        self.Q =  self.eps*Variable(torch.eye(self.N**2)).to(self._device)
+        self.BDlhs =  torch.cat( (POSlhs,LEQ1lhs),0  ).to(self._device)
+        self.BDrhs =  torch.cat( (POSrhs,LEQ1rhs),0  ).to(self._device)
 
 
 
 
-
-    def forward(self, x, group_ids):
+    def forward(self, x, group_ids=None):
         nBatch = x.size(0)
+        nx = self.nx
 
-        if x.shape[0] != group_ids.shape[0]:
-            print("Error: Input scores and group ID's not not have the same batch size")
+
+
+
 
         # Quadratic regularization strength
         qreg_stren = self.eps
         e = Variable(torch.Tensor())
 
         # Try these with and without the expand
-        Q = self.Q.to(self._device)  #.unsqueeze(0).expand( nBatch, self.N**2,  self.N**2 )
-        G = self.G.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq, self.N**2 )
-        h = self.h.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq )
+        Q = self.Q  #.unsqueeze(0).expand( nBatch, self.N**2,  self.N**2 )
+        DSMl = self.DSMl#.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq, self.N**2 )
+        DSMr = self.DSMr#.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq )
+
+
+        G = self.BDlhs.repeat(nBatch,1,1)
+        h = self.BDrhs.repeat(nBatch,1)
 
 
 
-        # The fairness constraint should be:
-        # f^T P v = 0
-        # useful form here is
-        # (v f^T) P*  = 0
-        # where P* is P flattened (row-major)
-        f = group_ids/group_ids.sum(1).reshape(-1,1) - (1 - group_ids)/(1 - group_ids).sum(1).reshape(-1,1)
-        v = self.exposure.repeat(f.shape[0],1) # repeat to match dimensions of f (batch dim)
 
-        # Set up v and f for outer product
-        v_unsq = v.unsqueeze(1).permute(0,2,1)
-        f_unsq = f.unsqueeze(1)
+        if( group_ids!=None ):
 
-        # Outer product v f^T
-        #   unroll to match P*
-        #   unsqueeze to make each a 1-row matrix
-        vXf = torch.bmm(v_unsq,f_unsq).view(-1,group_ids.shape[1]**2).unsqueeze(1).to(self._device) # this is still a batch
-        fair_b = torch.zeros(nBatch,1).to(self._device)
+            if x.shape[0] != group_ids.shape[0]:
+                print("Error: Input scores and group ID's not not have the same batch size")
+                input()
+
+            # The fairness constraint should be:
+            # f^T P v = 0
+            # useful form here is
+            # (v f^T) P*  = 0
+            # where P* is P flattened (row-major)
+            f = group_ids/group_ids.sum(1).reshape(-1,1) - (1 - group_ids)/(1 - group_ids).sum(1).reshape(-1,1)
+            v = self.exposure.repeat(f.shape[0],1) # repeat to match dimensions of f (batch dim)
+
+            # Set up v and f for outer product
+            v_unsq = v.unsqueeze(1)
+            f_unsq = f.unsqueeze(1).permute(0,2,1)
+            #v_unsq = v.unsqueeze(1).permute(0,2,1)
+            #f_unsq = f.unsqueeze(1)
+
+            # Outer product v f^T
+            #   unroll to match P*
+            #   unsqueeze to make each a 1-row matrix
+            vXf = torch.bmm(f_unsq,v_unsq).view(-1,group_ids.shape[1]**2).unsqueeze(1).to(self._device) # this is still a batch
+            #vXf = torch.bmm(v_unsq,f_unsq).view(-1,group_ids.shape[1]**2).unsqueeze(1).to(self._device) # this is still a batch
+            fair_b = torch.zeros(nBatch,1).to(self._device)
+
+            # JK Do we need to consider the computation graph wrt the group identity vectors?
+
+            # Here we exploit x!=x for x==nan
+            #vXf = torch.where(vXf==vXf, vXf, vXf.new_zeros(vXf.shape))
+
+            A = torch.cat( (DSMl.repeat(nBatch,1,1),vXf),1 )
+            #torch.cat((I.repeat(3,1,1),X.unsqueeze(1)),1)   # X is 2D, cat each row of X to a copy of I
+                                                             # need this in case vXf is incorporated into ineq matrix
+            b = torch.cat( (DSMr.repeat(nBatch,1),fair_b),1 )
+        else:
+            A = DSMl.repeat(nBatch,1,1)
+            b = DSMr.repeat(nBatch,1)
 
 
-        A = torch.cat( (G.repeat(nBatch,1,1),vXf),1 )
-        #torch.cat((I.repeat(3,1,1),X.unsqueeze(1)),1)   # X is 2D, cat each row of X to a copy of I
-                                                         # need this in case vXf is incorporated into ineq matrix
-        b = torch.cat( (h.repeat(nBatch,1),fair_b),1 )
-        print("A = ")
-        print( A )
+
+
+
+        ##### New sparse mode
+
+        #spTensor = torch.cuda.sparse.DoubleTensor
+        #iTensor = torch.cuda.LongTensor
+        #dTensor = torch.cuda.DoubleTensor
+
+        A = A[0].double()
+        G = G[0].double()
+        b = b[0].double()
+        h = h[0].double()
+        spTensor = torch.sparse.DoubleTensor
+        iTensor  = torch.LongTensor
+        dTensor  = torch.DoubleTensor
+
+        Qi  = iTensor([range(nx), range(nx)])
+        Qv  = Variable(dTensor(nx).fill_(self.eps))
+        Qsz = torch.Size([nx, nx])
+
+
+        t = A
+        neq = t.shape[0]
+        I = t != 0
+        Av = Variable(dTensor(t[I]))
+        Ai_np = torch.nonzero(t).T
+        Ai = torch.stack((torch.LongTensor(Ai_np[0]),
+                          torch.LongTensor(Ai_np[1])))#.cuda()
+        Asz = torch.Size([neq, nx])
+
+
+        t = G
+        neq = t.shape[0]
+        I = t != 0
+        Gv = Variable(dTensor(t[I]))
+        Gi_np = torch.nonzero(t).T
+        Gi = torch.stack((torch.LongTensor(Gi_np[0]),
+                          torch.LongTensor(Gi_np[1])))#.cuda()
+        Gsz = torch.Size([neq, nx])
+
+
+        """
+        I = G != 0
+        Gv = Variable(dTensor(G.double()[I]))
+        Gi_np = np.nonzero(G)
+        Gi = torch.stack((torch.LongTensor(Gi_np[0]),
+                               torch.LongTensor(Gi_np[1])))#.cuda()
+        Gsz = A.size() #torch.Size([neq, nx])
+        """
+
+        ############ END new
+
+        """
+        print("Qi = ")
+        print( Qi    )
+        print("Qv = ")
+        print( Qv    )
+        print("Qsz = ")
+        print( Qsz    )
+        print("Ai_np = ")
+        print( Ai_np )
+        print("Qi.size() = ")
+        print( Qi.size()    )
+        print("Qv.size() = ")
+        print( Qv.size()    )
+        print("Ai.size() = ")
+        print( Ai.size()    )
+        print("Av.size() = ")
+        print( Av.size()    )
+        print("Gi.size() = ")
+        print( Gi.size()    )
+        print("Gv.size() = ")
+        print( Gv.size()    )
+        """
+
+        print("Qi.dtype = ")
+        print( Qi.dtype )
+        print("Qsz = ")
+        print( Qsz )
+        print("Gi.dtype = ")
+        print( Gi.dtype )
+        print("Gsz = ")
+        print( Gsz )
+        print("Ai.dtype = ")
+        print( Ai.dtype )
+        print("Asz = ")
+        print( Asz )
+
+        print("Qv.size() = ")
+        print( Qv.size() )
+        print("Qv.dtype = ")
+        print( Qv.dtype )
+        print("x.double().dtype = ")
+        print( x.double().dtype )
+        print("Gv.dtype = ")
+        print( Gv.dtype )
+        print("h.dtype = ")
+        print( h.dtype )
+        print("Av.dtype = ")
+        print( Av.dtype )
+        print("b.dtype = ")
+        print( b.dtype )
+
+        inputs = x.double()
+        #x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), G.double(), h.double(), A.double(), b.double()   )
+        #x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), G.double(), h.double(), A.double(), b.double()   )
+        x = SpQPFunction(Qi, Qsz, Gi, Gsz, Ai, Asz, verbose=-1)(
+                Qv.expand(nBatch, Qv.size(0)),
+                inputs,
+                Gv.expand(nBatch, Gv.size(0)),
+                h.expand(nBatch, h.size(0)),
+                Av.expand(nBatch, Av.size(0)),
+                b.expand(nBatch, b.size(0))      )
+
+        return x.view(-1,self.N,self.N).float()
+
+        # JK note - to see hoe to assemble sparse matrices- sudoku models.py line 198
+
+
+
+
+# JK - check - unfinished
+# Haven't started work
+# delta is the allowed fairness gap
+class PolicyLP_PlusNeq(nn.Module):
+    # nNodes is the number of nodes on the left and right
+    def __init__(self, N=1, eps=1e-1, position_bias_vector = torch.Tensor([]), delta = 0.0):
+        super(PolicyLP_PlusNeq, self).__init__()
+
+        self.delta = delta
+
+        use_cuda = torch.cuda.is_available()
+        self._device = torch.device("cuda" if use_cuda else "cpu")
+
+        self.eps  = eps
+        self.N    = N
+        self.exposure = position_bias_vector[:N].float().to(self._device)
+
+
+        if self.exposure.numel() != self.N:
+            print("Error: Exposure vector has unexpected dimensions")
+
+        # Empty Tensor
+        e = Variable(torch.Tensor())
+
+
+        ROWlhs    = Variable( torch.zeros(N,N**2)  )
+        ROWrhs    = Variable(  ( torch.ones(N) )    )
+        COLlhs    = Variable( torch.zeros(N,N**2)  )
+        COLrhs    = Variable(  ( torch.ones(N) )    )
+        # All values are positive
+        POSlhs    = Variable(    -torch.eye(N**2,N**2)        )
+        POSrhs    = Variable(    -torch.zeros(N**2)        )
+        LEQ1lhs    = Variable(    torch.eye(N**2,N**2)        )
+        LEQ1rhs    = Variable(    torch.ones(N**2)        )
+
+
+
+        # Row sum constraints
+        for row in range(N):
+            ROWlhs[row,row*N:(row+1)*N] = 1.0
+
+        # Column sum constraints
+        for col in range(N):
+            COLlhs[col,col:-1:N] = 1.0
+        # fix the stupid issue of bottom left not filling
+        COLlhs[-1,-1] = 1.0
+
+        self.DSMl = torch.cat( (ROWlhs,COLlhs),0  ).to(self._device)
+        self.DSMr = torch.cat( (ROWrhs,COLrhs),0  ).to(self._device)
+        self.Q =  self.eps*Variable(torch.eye(self.N**2)).to(self._device)
+        self.BDlhs =  torch.cat( (POSlhs,LEQ1lhs),0  ).to(self._device)
+        self.BDrhs =  torch.cat( (POSrhs,LEQ1rhs),0  ).to(self._device)
+
+
+
+
+    def forward(self, x, group_ids=None):
+        nBatch = x.size(0)
+
+        delta = self.delta
+
+        # Quadratic regularization strength
+        qreg_stren = self.eps
+        e = Variable(torch.Tensor())
+
+        # Try these with and without the expand
+        Q = self.Q  #.unsqueeze(0).expand( nBatch, self.N**2,  self.N**2 )
+        DSMl = self.DSMl#.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq, self.N**2 )
+        DSMr = self.DSMr#.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq )
+
+
+        G = self.BDlhs.repeat(nBatch,1,1)
+        h = self.BDrhs.repeat(nBatch,1)
+
+
+
+        if( group_ids!=None ):
+
+            if x.shape[0] != group_ids.shape[0]:
+                print("Error: Input scores and group ID's not not have the same batch size")
+                input()
+
+            # The fairness constraint should be:
+            # f^T P v = 0
+            # useful form here is
+            # (v f^T) P*  = 0
+            # where P* is P flattened (row-major)
+            f = group_ids/group_ids.sum(1).reshape(-1,1) - (1 - group_ids)/(1 - group_ids).sum(1).reshape(-1,1)
+            v = self.exposure.repeat(f.shape[0],1) # repeat to match dimensions of f (batch dim)
+
+            # Set up v and f for outer product
+            v_unsq = v.unsqueeze(1)
+            f_unsq = f.unsqueeze(1).permute(0,2,1)
+            #v_unsq = v.unsqueeze(1).permute(0,2,1)
+            #f_unsq = f.unsqueeze(1)
+
+            # Outer product v f^T
+            #   unroll to match P*
+            #   unsqueeze to make each a 1-row matrix
+            vXf = torch.bmm(f_unsq,v_unsq).view(-1,group_ids.shape[1]**2).unsqueeze(1).to(self._device) # this is still a batch
+            #vXf = torch.bmm(v_unsq,f_unsq).view(-1,group_ids.shape[1]**2).unsqueeze(1).to(self._device) # this is still a batch
+            fair_b = torch.zeros(nBatch,1).to(self._device)
+
+            # JK Do we need to consider the computation graph wrt the group identity vectors?
+
+            # Here we exploit x!=x for x==nan
+            #vXf = torch.where(vXf==vXf, vXf, vXf.new_zeros(vXf.shape))
+
+            A = torch.cat( (DSMl.repeat(nBatch,1,1),vXf),1 )
+            #torch.cat((I.repeat(3,1,1),X.unsqueeze(1)),1)   # X is 2D, cat each row of X to a copy of I
+                                                             # need this in case vXf is incorporated into ineq matrix
+            b = torch.cat( (DSMr.repeat(nBatch,1),fair_b),1 )
+        else:
+            A = DSMl.repeat(nBatch,1,1)
+            b = DSMr.repeat(nBatch,1)
+
+        NEQ     = torch.cat(  (vXf,-vXf), 1  )
+        NEQrhs  = torch.Tensor([delta,delta])
+
+
+        # v x  <=  delta
+        #-v x  <=  delta
+
 
         inputs = x
-        x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), self.POSlhs.double(), self.POSrhs.double(), A.double(), b.double()   )
+        #x = QPFunction(verbose=1)(   Q.double(), -inputs.double(), G.double(), h.double(), e, e   )
+        x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), G.double(), h.double(), A.double(), b.double()   )
         #x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), G.double(), h.double(), vXf.double(), b.double()   )
         #x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), G.double(), h.double(), e, e   )
         return x.view(-1,self.N,self.N).float()
         # shape returned from QPFunction should be nBatch,N**2
+
+
+
+
 
 
 

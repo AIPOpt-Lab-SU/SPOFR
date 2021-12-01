@@ -15,4 +15,5 @@ def reader_from_pickle(input_filename):
     f = open(input_filename, "rb")
     dr = DataReader()
     dr.data = pkl.load(f)
+
     return dr

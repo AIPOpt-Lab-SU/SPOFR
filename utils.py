@@ -226,3 +226,288 @@ def exp_lr_scheduler(optimizer,
 # inspect.builtins.print = new_print
 # """
 # """
+
+
+
+
+
+
+
+
+
+# for Zehlike baseline 11/08
+
+def parse_my_args_reinforce():
+    parser = argparse.ArgumentParser(
+        description='Reinforce algorithm for learning to rank')
+    parser.add_argument(
+        '--train',
+        dest='train_dir',
+        type=str,
+        default=None,
+        help='training directory')
+    parser.add_argument(
+        '--test',
+        dest='test_dir',
+        type=str,
+        default=None,
+        help='test directory')
+    parser.add_argument(
+        '--train_pkl',
+        dest='train_pkl',
+        type=str,
+        default="yahoo/train.pkl",
+        help='training directory')
+    parser.add_argument(
+        '--test_pkl',
+        dest='test_pkl',
+        type=str,
+        default="yahoo/test.pkl",
+        help='test directory')
+    parser.add_argument('--dropout', dest='dropout', type=float, default=0.0)
+    hyperparam_g = parser.add_argument_group(
+        "hyperparams",
+        "Hyper parameters for the training of the neural network")
+    hyperparam_g.add_argument(
+        "--hidden",
+        dest='hidden_layer',
+        type=int,
+        default=128,
+        help="Size of hidden layer (Default=128)")
+    hyperparam_g.add_argument(
+        "--cores",
+        dest='num_cores',
+        type=int,
+        default=1,
+        help="Number of CPU cores used (Default=1)")
+    hyperparam_g.add_argument(
+        "-D", dest='input_dim', type=int, default=700, help="Input dimensions")
+    hyperparam_g.add_argument(
+        "--lr",
+        dest='lr',
+        type=str,
+        default="0.00001",
+        help="learning rate(s)")
+    hyperparam_g.add_argument(
+        '--epochs',
+        dest='epochs',
+        type=str,
+        default="20",
+        help="Number of training epochs")
+    hyperparam_g.add_argument(
+        "--l2",
+        dest='weight_decay',
+        type=str,
+        default="0.000",
+        help="Lambda for weight decay")
+    hyperparam_g.add_argument(
+        "--sample_size",
+        dest='sample_size',
+        type=str,
+        default="10",
+        help="Sample size")
+    parser.add_argument(
+        "--pretrain",
+        dest='pretrain',
+        action='store_true',
+        default=False,
+        help="Pretrain with log likelihood")
+    parser.add_argument(
+        "--check",
+        dest='save_checkpoints',
+        action='store_true',
+        default=False,
+        help="Save checkpoint for every epoch")
+    parser.add_argument(
+        "--noprogressbar",
+        dest='progressbar',
+        action='store_false',
+        default=True,
+        help="whether to use progressbar for training/validation progress")
+    hyperparam_g.add_argument(
+        '--baseline',
+        dest='baseline',
+        type=str,
+        default="value",
+        help="Which baseline to use. Options: none/value/max")
+    parser.add_argument(
+        '--initial_model',
+        dest='pretrained_model',
+        type=str,
+        default=None,
+        help="Use the model on this path as the pretrained initial model")
+    parser.add_argument(
+        '--gpu',
+        dest='gpu_id',
+        type=int,
+        default=None,
+        help="GPU id (default = None --> use CPU only)")
+    parser.add_argument(
+        '--expname',
+        dest='expname',
+        type=str,
+        default=None,
+        help="Name of the experiment. Used for logging purposes only right now"
+    )
+    parser.add_argument(
+        '--entreg',
+        dest='entropy_regularizer',
+        type=float,
+        default=0.0,
+        help="Lambda for entropy regularization")
+    parser.add_argument(
+        '--reward_type',
+        dest='reward_type',
+        type=str,
+        default="ndcg",
+        help="Reward type: Choose out of dcg/ndcg/avrank")
+    parser.add_argument(
+        '--eval_int',
+        dest='evaluate_interval',
+        type=int,
+        default=2000,
+        help="Evaluate after these many number of steps")
+    parser.add_argument(
+        '--lindf',
+        dest='lambda_ind_fairness',
+        type=float,
+        default=0.0,
+        help="Lambda for the individual fairness cost")
+    parser.add_argument(
+        '--lgf',
+        dest='lambda_group_fairness',
+        type=float,
+        default=0.0,
+        help="Lambda for the group fairness cost")
+    parser.add_argument(
+        '--lreward',
+        dest='lambda_reward',
+        type=float,
+        default=1.0,
+        help="Lambda for reward in the REINFORCE style updates."
+        " Can be set to 0 to start all fairness training")
+    parser.add_argument(
+        '--indfv',
+        dest='fairness_version',
+        type=str,
+        default='asym_disparity',
+        help="Current options: squared_residual, cross_entropy, scale_inv_mse"
+        "pairwise_disparity, asym_disparity")
+
+    parser.add_argument(
+        '--gfv',
+        dest='group_fairness_version',
+        type=str,
+        default='asym_disparity',
+        help="Current options: sq_disparity, asym_disparity")
+    parser.add_argument(
+        '--skip_zero',
+        dest='skip_zero_relevance',
+        action="store_true",
+        default=False,
+        help=
+        "Whether the fairness constraints should skip the documents with zero "
+        "relevance out of the fairness loss term")
+    parser.add_argument(
+        '--lr_scheduler',
+        dest='lr_scheduler',
+        action="store_true",
+        default=False,
+        help=
+        "If chosen, we do an exponential decay for lr by reducing it by 0.1 every epoch"
+    )
+    parser.add_argument(
+        '--lr_decay',
+        dest='lr_decay',
+        type=float,
+        default=0.0,
+        help="How much do you want to reduce the lr in each step by."
+        " Requires --lr_scheduler to be used.")
+    parser.add_argument(
+        '--summary',
+        dest='summary_writing',
+        action="store_true",
+        default=False,
+        help="Whether to write summaries into tensorboardX logs")
+    parser.add_argument(
+        '--group_feat_id',
+        dest='group_feat_id',
+        type=int,
+        default=0,
+        help="index of the feature that contains the group id of the document")
+    parser.add_argument(
+        '--entreg_decay',
+        dest='entreg_decay',
+        type=float,
+        default=1.0,
+        help='How much does entropy regularizer drop by after each epoch')
+    # parser.add_argument(
+    #     '--macro',
+    #     dest='macro_avg',
+    #     action='store_true',
+    #     default=False,
+    #     help=
+    #     "Average over the numbers from all the queries rather than
+    # micro(average over diffeernt documents and then average over queries)"
+    # )
+    parser.add_argument(
+        '-k',
+        dest='eval_rank_limit',
+        type=int,
+        default=1000,
+        help='Maximum rank uptil which the dcg is computed')
+    parser.add_argument(
+        '--evalk',
+        dest='evalk',
+        type=int,
+        default=1000,
+        help=
+        'Maximum rank uptil which the dcg is computed (only while computing)')
+    parser.add_argument(
+        '--pooling',
+        dest='pooling',
+        type=str,
+        default='concat_avg',
+        help="whether to use the average or max of the candidate set or not")
+    parser.add_argument(
+        '--optimizer',
+        dest='optimizer',
+        type=str,
+        default='Adam',
+        help="Which optimizer to use")
+    parser.add_argument(
+        '--early',
+        dest='early_stopping',
+        action="store_true",
+        default=False,
+        help="Whether to do early stopping or not (on NDCG)")
+    parser.add_argument(
+        '--det',
+        dest="validation_deterministic",
+        action="store_true",
+        default=False,
+        help="Whether the validation runs use "
+        "the deterministic policy or stochastic.")
+    parser.add_argument(
+        '--model',
+        dest='model_type',
+        type=str,
+        default='NN',
+        help="Which model type to use: NN or Linear. Default:NN")
+    parser.add_argument(
+        '--clamp',
+        dest='clamp',
+        action="store_true",
+        default=False,
+        help="Whether the model output is clamped or not")
+    parser.add_argument(
+        '--eval_temp',
+        dest="eval_temperature",
+        type=float,
+        default=1.0,
+        help=
+        "When evaluating the policy, what temperature to use in the softmax")
+
+    args = parser.parse_args()
+    args = postprocess_args(args)
+    return args
