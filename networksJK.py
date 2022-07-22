@@ -7,6 +7,8 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 import math
+from ort_rank import *
+
 class MLPNet(nn.Module):
     """
     Implement a MLP with  single hidden layer. The choice of activation
@@ -1069,6 +1071,8 @@ class PolicyLP_Plus(nn.Module):
 
         if self.exposure.numel() != self.N:
             print("Error: Exposure vector has unexpected dimensions")
+            #print(self.exposure.numel())
+            #print(self.N)
 
         # Empty Tensor
         e = Variable(torch.Tensor())
@@ -1167,6 +1171,8 @@ class PolicyLP_Plus(nn.Module):
 
             if x.shape[0] != group_ids.shape[0]:
                 print("Error: Input scores and group ID's not not have the same batch size")
+                print(x.shape[0])
+                print(group_ids.shape[0])
                 input()
 
             # The fairness constraint should be:
@@ -1212,6 +1218,170 @@ class PolicyLP_Plus(nn.Module):
         #x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), G.double(), h.double(), e, e   )
         return x.view(-1,self.N,self.N).float()
         # shape returned from QPFunction should be nBatch,N**2
+
+
+
+
+
+def PolicyBlackboxWrapper(lambd, N, group_ids, disp_type, group0_merit, group1_merit, delta):
+
+    class BlackboxWrap(torch.autograd.Function):
+
+        @staticmethod
+        def forward(ctx, x):
+
+            y = []
+            for i in range(len(x)):
+                s,v = ort_setup_Neq(N, group_ids[i], disp_type, group0_merit, group1_merit, delta)
+                solver = ort_policyLP(s,v)
+                output = solver.solve(x[i])
+                y.append(torch.Tensor(output))
+
+            y = torch.stack(y)  #make sure this is doing the right thing over the batch
+            ctx.save_for_backward( x,y )
+            return y
+
+        @staticmethod
+        def backward(ctx, grad_output):
+
+            x,y = ctx.saved_tensors
+            x_p =  x +  grad_output * lambd
+
+            y_lambd = []
+            for i in range(len(x_p)):
+                s,v = ort_setup_Neq(N, group_ids[i], disp_type, group0_merit, group1_merit, delta)
+                solver = ort_policyLP(s,v)
+                output = solver.solve(x_p[i])
+                y_lambd.append(torch.Tensor(output))
+
+            y_lambd = torch.stack(y_lambd)
+            # multiply each gradient by the jacobian for the corresponding sample
+            # then restack the results to preserve the batch gradients' format
+            grad_input = - 1/lambd*(  y - y_lambd  )
+
+            """
+            print("y = ")
+            print( y )
+            print("y_lambd = ")
+            print( y_lambd )
+            print("y - y_lambd = ")
+            print( y - y_lambd )
+            print("grad_output = ")
+            print( grad_output )
+            print("grad_input = ")
+            print( grad_input )
+            input()
+            """
+
+            return grad_input
+
+    return BlackboxWrap
+
+
+
+
+
+
+
+
+def create_torch_LP(N=1, position_bias_vector = torch.Tensor([]), group_ids = None):
+
+    exposure = position_bias_vector[:N].float()
+
+    if exposure.numel() != N:
+        print("Error: Exposure vector has unexpected dimensions")
+
+    # Empty Tensor
+    e = Variable(torch.Tensor())
+
+
+    ROWlhs    = Variable( torch.zeros(N,N**2)  )
+    ROWrhs    = Variable(  ( torch.ones(N) )    )
+    COLlhs    = Variable( torch.zeros(N,N**2)  )
+    COLrhs    = Variable(  ( torch.ones(N) )    )
+
+    POSlhs    = Variable(    -torch.eye(N**2,N**2)        )
+    POSrhs    = Variable(    -torch.zeros(N**2)        )
+    LEQ1lhs    = Variable(    torch.eye(N**2,N**2)        )
+    LEQ1rhs    = Variable(    torch.ones(N**2)        )
+
+
+    # Row sum constraints
+    for row in range(N):
+        ROWlhs[row,row*N:(row+1)*N] = 1.0
+
+    # Column sum constraints
+    for col in range(N):
+        COLlhs[col,col:-1:N] = 1.0
+    # fix the stupid issue of bottom left not filling
+    COLlhs[-1,-1] = 1.0
+
+
+    DSMl = torch.cat( (ROWlhs,COLlhs),0  )
+    DSMr = torch.cat( (ROWrhs,COLrhs),0  )
+    BDlhs =  torch.cat( (POSlhs,LEQ1lhs),0  )
+    BDrhs =  torch.cat( (POSrhs,LEQ1rhs),0  )
+
+    e = Variable(torch.Tensor())
+
+    # Try these with and without the expand
+    #Q = Q  #.unsqueeze(0).expand( nBatch, self.N**2,  self.N**2 )
+    #DSMl = DSMl#.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq, self.N**2 )
+    #DSMr = DSMr#.to(self._device)   #.unsqueeze(0).expand( nBatch, self.nineq )
+
+
+    G = BDlhs
+    h = BDrhs
+
+
+    f = group_ids/group_ids.sum(1).reshape(-1,1) - (1 - group_ids)/(1 - group_ids).sum(1).reshape(-1,1)
+    v = exposure.repeat(f.shape[0],1) # repeat to match dimensions of f (batch dim)
+
+    # Set up v and f for outer product
+    v_unsq = v.unsqueeze(1)
+    f_unsq = f.unsqueeze(1).permute(0,2,1)
+
+    vXf = torch.bmm(f_unsq,v_unsq).view(-1,group_ids.shape[1]**2)
+
+    fair_b = torch.Tensor([0.0])
+
+
+
+
+    A = torch.cat( (DSMl,vXf),0 )
+
+    b = torch.cat( (DSMr,fair_b),0 )
+    """
+    print("G.shape = ")
+    print( G.shape )
+    print("h.shape = ")
+    print( h.shape )
+    print("A.shape = ")
+    print( A.shape )
+    print("b.shape = ")
+    print( b.shape )
+    """
+
+    #inputs = x
+    #x = QPFunction(verbose=-1)(   Q.double(), -inputs.double(), G.double(), h.double(), A.double(), b.double()   )
+
+    return G,h,A,b
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

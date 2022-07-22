@@ -89,7 +89,7 @@ add_bool_arg(parser, "evaluation_deterministic", default=False)
 parser.add_argument("--lr", type=float, default=0.001)
 add_bool_arg(parser, "lr_scheduler", True)
 parser.add_argument("--lr_decay", type=float, default=0.2)
-parser.add_argument("--optimizer", type=str, default="SGD")
+parser.add_argument("--optimizer", type=str, default="adam")
 parser.add_argument("--weight_decay", type=float, default=0.0)
 
 parser.add_argument("--pooling", type=str, default='concat_avg')
@@ -115,6 +115,7 @@ parser.add_argument("--seed", type=int, default = 9999)
 parser.add_argument("--multi_groups", type=int, default=0)   # values of 1 and 2 are not appropriate; 0 indicates 2 groups (original)
 parser.add_argument("--gme_new", type=int, default=1)   # 0 indicates original get_multiple_exposures function; 1 indicates the revision by JK
 parser.add_argument("--lambda_group_fairness", type=float, default=0.000000000001)
+parser.add_argument("--mode", type=str, default = 'spo')   # spo, bb, qp, int
 
 add_bool_arg(parser, "noise", False)
 parser.add_argument("--en", type=float, default=0.1)

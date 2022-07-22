@@ -16,7 +16,7 @@ import time
 from models import LinearModel # JK
 import pickle
 import pandas as pd
-from gurobi_rank import *
+from ort_rank import *
 
 def sample_multiple_ranking(probs, sample_size):
     candidate_set_size = probs.shape[0]
@@ -611,19 +611,19 @@ def evaluate_model(model,
 # JK
 # Test-time evaluation for soft_policy_training
 def evaluate_soft_model(model,
-                   validation_data,
-                   group0_merit = None,   # JK
-                   group1_merit = None,   # JK
-                   num_sample_per_query=10,
-                   deterministic=False,
-                   fairness_evaluation=False,
-                   position_bias_vector=None,
-                   group_fairness_evaluation=False,
-                   track_other_disparities=False,
-                   args=None,
-                   normalize=False,
-                   noise=None,
-                   en=None):
+                        validation_data,
+                        group0_merit = None,   # JK
+                        group1_merit = None,   # JK
+                        num_sample_per_query=10,
+                        deterministic=False,
+                        fairness_evaluation=False,
+                        position_bias_vector=None,
+                        group_fairness_evaluation=False,
+                        track_other_disparities=False,
+                        args=None,
+                        normalize=False,
+                        noise=None,
+                        en=None):
     if noise is None:
         noise = args.noise
     if en is None:

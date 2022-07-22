@@ -172,6 +172,7 @@ def torchify(u):
 
 def get_optimizer(params, lr, name="Adam", weight_decay=False, momentum=0.9):
     name = name.lower()
+    #print('name = {}'.format(name))
     from torch import optim
     if name == "adam":
         return optim.Adam(params, lr=lr, weight_decay=weight_decay)

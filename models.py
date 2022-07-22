@@ -113,6 +113,8 @@ class MLP(ScoreModel):
             size = last_size // 2
             linear = nn.Linear(last_size, size)
             bn = nn.BatchNorm1d(20)  #JK
+
+
             #bn = nn.LayerNorm(size)  #JK
             linear.bias.data.fill_(0.0)
             fcs.append(linear)

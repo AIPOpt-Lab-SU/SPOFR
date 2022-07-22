@@ -10,7 +10,7 @@ import ast
 
 from parse_args import args
 from datareader import reader_from_pickle
-from train2 import on_policy_training, soft_policy_training, soft_policy_training_spo, soft_policy_training_spo_multi # JK
+from train2 import on_policy_training, soft_policy_training, soft_policy_training_spo, soft_policy_training_spo_multi, soft_policy_training_qp, soft_policy_training_bb, soft_policy_training_int, soft_policy_training_twostage # JK
 from models import LinearModel, MLP, MLPGroupEmbedding, SiameseMLP, MLPQuadScore # JK
 from evaluation import evaluate_model
 from utils import serialize, transform_dataset, unserialize
@@ -128,9 +128,32 @@ if __name__ == "__main__":
                     train_data, val_data, test_data, model, writer=writer,
                     experiment_name=experiment_name, args=args)
             else:
-                result = soft_policy_training_spo(
-                    train_data, val_data, test_data, model, writer=writer,
-                    experiment_name=experiment_name, args=args)
+                if args.mode == 'spo':
+                    result = soft_policy_training_spo(
+                        train_data, val_data, test_data, model, writer=writer,
+                        experiment_name=experiment_name, args=args)
+                elif args.mode == 'qp':
+                    result = soft_policy_training_qp(
+                        train_data, val_data, test_data, model, writer=writer,
+                        experiment_name=experiment_name, args=args)
+                elif args.mode == 'bb':
+                    result = soft_policy_training_bb(
+                        train_data, val_data, test_data, model, writer=writer,
+                        experiment_name=experiment_name, args=args)
+                elif args.mode == 'int':
+                    result = soft_policy_training_int(
+                        train_data, val_data, test_data, model, writer=writer,
+                        experiment_name=experiment_name, args=args)
+                elif args.mode == 'twostage':
+                    result = soft_policy_training_twostage(
+                        train_data, val_data, test_data, model, writer=writer,
+                        experiment_name=experiment_name, args=args)
+
+
+                else:
+                    print("Invalid training mode chosen")
+
+
 
         elif args.soft_train == 2:
             if args.disparity_type == 'disp0':

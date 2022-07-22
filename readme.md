@@ -1,9 +1,13 @@
+
 # End-to-End Learning for Fair Ranking Systems
 
-The implementation for ([arxiv](https://arxiv.org/abs/2111.10723v1)):  
+Learning to rank subject to constraints on group exposure, using differentiable optimization modules in predict-and-optimize fashion.
 
+See the accompanying paper in WWW '22: <https://arxiv.org/abs/2111.10723>
 
-James Kotary, Ferdinando Fioretto, Pascal Van Hentenryck, Ziwei Zhu
+Required datasets for this project can be found by following the instructions on <https://github.com/him229/fultr>
 
+Credit to the original authors Himank Yadav et. al. for the LTR data and several code segments
 
-Several files are adapted from this repo https://github.com/him229/fultr; which provides an implementation for the following paper: ([arxiv](https://arxiv.org/pdf/1911.08054.pdf))
+For an example command to run the main program, see main.sh
+
